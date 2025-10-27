@@ -1,8 +1,7 @@
+// src/components/MatchScreen.jsx
 import React, { useEffect } from "react";
-import { io } from "socket.io-client";
-import socket from "../../socket";
-
-// const socket = io("http://localhost:5000");
+import socket from "../socket";
+import "../styles/match.css"; // styles d'animation
 
 export default function MatchScreen({ onMatched }) {
   useEffect(() => {
@@ -14,15 +13,31 @@ export default function MatchScreen({ onMatched }) {
       onMatched(partner);
     });
 
+    socket.on("searching", () => {
+      console.log("🔎 Searching...");
+    });
+
+    socket.on("attemptMatch", () => {
+      // optional
+    });
+
     return () => {
       socket.off("matchFound");
+      socket.off("searching");
+      socket.off("attemptMatch");
     };
-  }, []);
+  }, [onMatched]);
 
   return (
     <div className="match-screen">
-      <h1>🎯 Trouvons ton match...</h1>
-      <p>Attends un instant ⏳</p>
+      <div className="spinner-wrap">
+        <div className="neo-spinner">
+          <div className="bar bar1" />
+          <div className="bar bar2" />
+          <div className="bar bar3" />
+        </div>
+        <p className="waiting-text">Recherche d'un partenaire…</p>
+      </div>
     </div>
   );
 }

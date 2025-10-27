@@ -1,3 +1,4 @@
+// backend/server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -11,19 +12,27 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Configuration CORS propre et sécurisée
-const allowedOrigins = [
-  "http://localhost:5173",       // ton front local
-  "http://127.0.0.1:5173",
-  "https://neo-chat.vercel.app", // ton futur front hébergé
-  "https://*.vercel.app"         // wildcard pour Vercel
-];
+// Lecture dynamique des origines depuis .env
+const envOrigins = process.env.ALLOWED_ORIGINS || "";
+const allowedOrigins = envOrigins
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// fallback si vide
+if (allowedOrigins.length === 0) {
+  allowedOrigins.push("http://localhost:5173", "http://127.0.0.1:5173");
+}
+
+console.log("✅ Allowed origins:", allowedOrigins);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // autorise les requêtes sans "origin" (Postman, etc.)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+    if (!origin) return callback(null, true); // Postman / localhost file requests
+    if (allowedOrigins.includes(origin) || allowedOrigins.some(o => {
+      // support simple wildcard like https://*.vercel.app
+      return o.includes("*") && new RegExp("^" + o.replace(/\*/g, ".*") + "$").test(origin);
+    })) {
       return callback(null, true);
     } else {
       return callback(new Error("CORS bloqué : origine non autorisée"));
@@ -35,7 +44,6 @@ app.use(cors({
 
 app.use(express.json());
 
-// ✅ CORS aussi pour Socket.io
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -44,14 +52,11 @@ const io = new Server(server, {
   },
 });
 
-// route test
 app.get("/", (req, res) => res.send("🟢 Neo Chat Backend Ready"));
 
-// initialisation des sockets
 chatSocket(io);
 
 const PORT = process.env.PORT || 5000;
-
 server.listen(PORT, async () => {
   console.log(`🚀 Serveur lancé sur le port ${PORT}`);
   await createConnection();

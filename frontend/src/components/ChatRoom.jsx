@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from "react";
-import { io } from "socket.io-client";
-import socket from "../../socket";
+// src/components/ChatRoom.jsx
+import React, { useState, useEffect, useRef } from "react";
+import socket from "../socket";
+import "../styles/chatroom.css"; // includes button styles and match animation
 
-// const socket = io("http://localhost:5000");
-
-export default function ChatRoom({ partner }) {
+export default function ChatRoom({ partner, onUnmatched }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const audioRef = useRef(null);
 
   useEffect(() => {
     console.log("📥 Écoute des messages entrants");
@@ -15,30 +15,68 @@ export default function ChatRoom({ partner }) {
       setMessages((prev) => [...prev, msg]);
     });
 
-    return () => socket.off("receiveMessage");
-  }, []);
+    // si le partner left côté serveur
+    socket.on("partnerLeft", () => {
+      console.log("⚠️ Ton partenaire est parti");
+      // éventuellement informer l'utilisateur et revenir au matching
+      onUnmatched();
+    });
+
+    // quand on reçoit match (en cas de re-match)
+    socket.on("matchFound", (p) => {
+      console.log("🔔 Nouveau match reçu !", p);
+      // joue le son
+      if (audioRef.current) audioRef.current.play();
+    });
+
+    return () => {
+      socket.off("receiveMessage");
+      socket.off("partnerLeft");
+      socket.off("matchFound");
+    };
+  }, [onUnmatched]);
 
   const sendMessage = () => {
-    if (!input) return;
-    console.log("📤 Envoi message :", input, "à", partner.id);
-    socket.emit("sendMessage", { content: input, receiverId: partner.id });
+    if (!input.trim()) return;
+    console.log("📤 Envoi message :", input);
+    socket.emit("sendMessage", { content: input });
     setMessages((prev) => [...prev, { sender: "Moi", content: input }]);
     setInput("");
   };
 
+  const switchPartner = () => {
+    // demarque : on notifie le serveur qu'on veut changer
+    console.log("🔁 Demande de switch partenaire");
+    socket.emit("switchPartner");
+    // on retourne au flow de matching côté UI
+    onUnmatched();
+  };
+
   return (
-    <div>
-      <div>
+    <div className="chat-room-neo">
+      <audio ref={audioRef} src="/sounds/match.mp3" preload="auto" />
+      <div className="chat-header">
+        <h3>Partner: {partner?.id ?? "—"}</h3>
+        <button className="btn-switch" onClick={switchPartner}>Changer de partenaire</button>
+      </div>
+
+      <div className="messages">
         {messages.map((m, i) => (
-          <p key={i}><b>{m.sender}:</b> {m.content}</p>
+          <div key={i} className={`msg ${m.sender === "Moi" ? "me" : "them"}`}>
+            <strong>{m.sender === "Moi" ? "Moi" : m.sender}:</strong> {m.content}
+          </div>
         ))}
       </div>
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="Écrire un message..."
-      />
-      <button onClick={sendMessage}>Envoyer</button>
+
+      <div className="input-area">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Écrire un message..."
+          onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }}
+        />
+        <button onClick={sendMessage}>Envoyer</button>
+      </div>
     </div>
   );
 }
