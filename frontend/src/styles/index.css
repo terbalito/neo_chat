@@ -13,3 +13,15 @@ body {
   height: 100vh;
   font-size: 2rem;
 }
+.switch-btn {
+  background: none;
+  border: none;
+  color: #007bff;
+  font-weight: bold;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.switch-btn:hover {
+  color: #0056b3;
+}

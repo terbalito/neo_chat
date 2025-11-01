@@ -1,27 +1,85 @@
-// src/App.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import MatchScreen from "./components/MatchScreen";
 import ChatRoom from "./components/ChatRoom";
+import Login from "./components/Login";
+import Signup from "./components/Signup";
 
 export default function App() {
   const [partner, setPartner] = useState(null);
+  const [user, setUser] = useState(null); // utilisateur connecté
+  const [mode, setMode] = useState("login"); // "login" ou "signup"
 
-  const handleMatched = (partnerObj) => {
-    // partnerObj peut être {id: "..."}
-    setPartner(partnerObj);
-  };
+  // Auto-login si token présent
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const pseudo = localStorage.getItem("pseudo");
+    if (token && pseudo) setUser({ pseudo, token });
+  }, []);
 
-  const handleUnmatched = () => {
-    // when partner leaves or user requests switch -> go back to matching
+  const handleLogin = (userData) => setUser(userData);
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("pseudo");
+    setUser(null);
     setPartner(null);
   };
 
+  const handleMatched = (partnerObj) => setPartner(partnerObj);
+  const handleUnmatched = () => setPartner(null);
+
   return (
     <div className="app-container">
-      {!partner ? (
-        <MatchScreen onMatched={handleMatched} />
+      {/* --- Étape 1 : Authentification --- */}
+      {!user ? (
+        <div className="auth-container">
+          {mode === "login" ? (
+            <>
+              <Login onLogin={handleLogin} />
+              <p style={{ marginTop: "10px" }}>
+                Pas encore de compte ?{" "}
+                <button
+                  onClick={() => setMode("signup")}
+                  className="switch-btn"
+                >
+                  S'inscrire
+                </button>
+              </p>
+            </>
+          ) : (
+            <>
+              <Signup onSignup={() => setMode("login")} />
+              <p style={{ marginTop: "10px" }}>
+                Déjà inscrit ?{" "}
+                <button
+                  onClick={() => setMode("login")}
+                  className="switch-btn"
+                >
+                  Se connecter
+                </button>
+              </p>
+            </>
+          )}
+        </div>
       ) : (
-        <ChatRoom partner={partner} onUnmatched={handleUnmatched} />
+        // --- Étape 2 : Match / Chat ---
+        <>
+          <div className="header">
+            <p>
+              Connecté en tant que <strong>{user.pseudo}</strong>
+            </p>
+            <button onClick={handleLogout}>Déconnexion</button>
+          </div>
+
+          {!partner ? (
+            <MatchScreen onMatched={handleMatched} user={user} />
+          ) : (
+            <ChatRoom
+              partner={partner}
+              onUnmatched={handleUnmatched}
+              user={user}
+            />
+          )}
+        </>
       )}
     </div>
   );
