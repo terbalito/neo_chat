@@ -1,108 +1,146 @@
 // backend/sockets/chatSocket.js
+import pool from "../utils/db.js"; // pour récupérer infos utilisateurs depuis la DB si besoin
+
 export function chatSocket(io) {
   let waitingUsers = []; // queue FIFO
   const users = {}; // socketId -> socket
   const matches = new Map(); // socketId -> partnerSocketId
 
+  // fonction pour trouver un partenaire
+  async function trouverPartenairePour(socketId) {
+    const otherSocketId = waitingUsers.find(
+      (id) => id !== socketId && !matches.has(id)
+    );
+
+    if (!otherSocketId) {
+      if (!waitingUsers.includes(socketId)) waitingUsers.push(socketId);
+      return null;
+    }
+
+    waitingUsers = waitingUsers.filter(
+      (id) => id !== otherSocketId && id !== socketId
+    );
+
+    matches.set(socketId, otherSocketId);
+    matches.set(otherSocketId, socketId);
+
+    const partnerSocket = users[otherSocketId];
+    let partnerPseudo = partnerSocket?.pseudo;
+
+    if (!partnerPseudo) {
+      try {
+        const rows = await pool.query(
+          "SELECT pseudo FROM users WHERE id = ?",
+          [otherSocketId]
+        );
+        partnerPseudo = rows[0]?.pseudo || "Anonyme";
+      } catch (err) {
+        console.error("Erreur récupération pseudo :", err);
+        partnerPseudo = "Anonyme";
+      }
+    }
+
+    return {
+      id: otherSocketId,
+      pseudo: partnerPseudo,
+      socketId: otherSocketId,
+    };
+  }
+
   io.on("connection", (socket) => {
     console.log("⚡ Utilisateur connecté :", socket.id);
     users[socket.id] = socket;
 
-    // Cherche un match
-    socket.on("findMatch", () => {
-      console.log(`🔍 ${socket.id} cherche un match...`);
-      // ignore si déjà matché
-      if (matches.has(socket.id)) {
-        console.log(`⚠️ ${socket.id} est déjà matché avec ${matches.get(socket.id)}`);
-        return;
-      }
-
-      // si file non vide, pop et match
-      while (waitingUsers.length > 0) {
-        const partnerId = waitingUsers.shift();
-        if (!users[partnerId] || partnerId === socket.id) continue;
-        // si partner déjà matché, skip
-        if (matches.has(partnerId)) continue;
-
-        // garder les matches dans les deux sens
-        matches.set(socket.id, partnerId);
-        matches.set(partnerId, socket.id);
-
-        console.log(`✅ Match trouvé : ${socket.id} ↔ ${partnerId}`);
-        socket.emit("matchFound", { id: partnerId });
-        users[partnerId].emit("matchFound", { id: socket.id });
-        return;
-      }
-
-      // sinon on met en attente
-      waitingUsers.push(socket.id);
-      console.log(`⏳ ${socket.id} mis en attente`);
-      console.log("💾 File d'attente actuelle :", waitingUsers);
+    // Optionnel : stocker le pseudo côté socket
+    socket.on("setPseudo", (pseudo) => {
+      socket.pseudo = pseudo;
     });
 
-    // Demande pour switcher / quitter partenaire et retrouver un match
-    socket.on("switchPartner", () => {
-      console.log(`🔁 ${socket.id} demande à switcher`);
-      const partnerId = matches.get(socket.id);
-      if (partnerId) {
-        // notifie le partenaire qu'il a été lâché
-        if (users[partnerId]) {
-          users[partnerId].emit("partnerLeft");
-        }
-        // supprimer le match des deux côtés
-        matches.delete(socket.id);
-        matches.delete(partnerId);
-        console.log(`🗑️ Match supprimé: ${socket.id} ↔ ${partnerId}`);
+    // Cherche un match
+    socket.on("findMatch", async () => {
+      const partner = await trouverPartenairePour(socket.id);
+      if (partner) {
+        io.to(socket.id).emit("matchFound", {
+          id: partner.id,
+          pseudo: partner.pseudo,
+        });
+
+        io.to(partner.socketId).emit("matchFound", {
+          id: socket.id,
+          pseudo: socket.pseudo || "Anonyme",
+        });
+      } else {
+        socket.emit("searching");
       }
+    });
 
-      // met le socket en recherche immédiate
-      // assure-toi d'enlever s'il était dans la file d'attente
-      waitingUsers = waitingUsers.filter(id => id !== socket.id);
+    // Switch / quitter partenaire
+    socket.on("switchPartner", () => {
+      const partnerId = matches.get(socket.id);
+      if (partnerId && users[partnerId]) {
+        users[partnerId].emit("partnerLeft");
+      }
+      matches.delete(socket.id);
+      matches.delete(partnerId);
+
+      waitingUsers = waitingUsers.filter((id) => id !== socket.id);
       waitingUsers.push(socket.id);
-      console.log(`⏳ ${socket.id} remis en attente`);
-      console.log("💾 File d'attente actuelle :", waitingUsers);
 
-      // tenter un match immédiat (si quelqu'un attend)
       socket.emit("searching");
-      socket.emit("attemptMatch"); // côté client juste log si besoin
-      // essayer de matcher à nouveau (pour cas où quelqu'un est déjà en attente)
+      socket.emit("attemptMatch");
       socket.emit("findMatch");
     });
 
-    // Serve message -> envoie direct au partenaire si existant
+    // Envoyer un message
     socket.on("sendMessage", ({ content }) => {
       const partnerId = matches.get(socket.id);
       if (partnerId && users[partnerId]) {
-        console.log(`📩 ${socket.id} -> ${partnerId}: ${content}`);
-        users[partnerId].emit("receiveMessage", { sender: socket.id, content });
+        const senderPseudo = socket.pseudo || "Moi";
+
+        // envoie au partenaire
+        users[partnerId].emit("receiveMessage", {
+          sender: senderPseudo,
+          content,
+        });
+
+        // envoie à l'expéditeur (comme confirmation)
+        socket.emit("receiveMessage", {
+          sender: "Moi",
+          content,
+        });
+
+        console.log(`📩 ${senderPseudo} -> ${partnerId}: ${content}`);
       } else {
-        console.log(`⚠️ ${socket.id} essaye d'envoyer mais n'a pas de partner`);
         socket.emit("noPartner");
+        console.log(`⚠️ ${socket.id} n'a pas de partner pour envoyer`);
       }
     });
 
-    // support client pour quitter proprement la file d'attente
-    socket.on("leaveQueue", () => {
-      waitingUsers = waitingUsers.filter(id => id !== socket.id);
-      socket.emit("leftQueue");
-      console.log(`🚪 ${socket.id} a quitté la file d'attente`);
+    // Typing indicator
+    socket.on("typing", (isTyping) => {
+      const partnerId = matches.get(socket.id);
+      if (partnerId && users[partnerId]) {
+        users[partnerId].emit("partnerTyping", isTyping);
+      }
     });
 
+    // Quitter la file
+    socket.on("leaveQueue", () => {
+      waitingUsers = waitingUsers.filter((id) => id !== socket.id);
+      socket.emit("leftQueue");
+    });
+
+    // Déconnexion
     socket.on("disconnect", () => {
       console.log("❌ Utilisateur déconnecté :", socket.id);
-      // si match existait, prévenir l'autre
-      const partner = matches.get(socket.id);
-      if (partner && users[partner]) {
-        users[partner].emit("partnerLeft");
-        matches.delete(partner);
+      const partnerId = matches.get(socket.id);
+      if (partnerId && users[partnerId]) {
+        users[partnerId].emit("partnerLeft");
+        matches.delete(partnerId);
       }
       matches.delete(socket.id);
-
-      // retirer de la file d'attente
-      waitingUsers = waitingUsers.filter(id => id !== socket.id);
+      waitingUsers = waitingUsers.filter((id) => id !== socket.id);
       delete users[socket.id];
-
-      console.log("💾 File d'attente mise à jour :", waitingUsers);
     });
   });
 }

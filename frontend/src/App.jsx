@@ -3,6 +3,7 @@ import MatchScreen from "./components/MatchScreen";
 import ChatRoom from "./components/ChatRoom";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
+import socket from "./socket"; // ⚠️ IMPORTANT
 
 export default function App() {
   const [partner, setPartner] = useState(null);
@@ -13,10 +14,17 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem("token");
     const pseudo = localStorage.getItem("pseudo");
-    if (token && pseudo) setUser({ pseudo, token });
+    if (token && pseudo) {
+      setUser({ pseudo, token });
+      socket.emit("setPseudo", pseudo); // ⚡ Associer le pseudo au socket
+    }
   }, []);
 
-  const handleLogin = (userData) => setUser(userData);
+  const handleLogin = (userData) => {
+    setUser(userData);
+    socket.emit("setPseudo", userData.pseudo); // ⚡ Ici userData est défini
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("pseudo");
