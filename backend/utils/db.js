@@ -8,7 +8,7 @@ dotenv.config();
 const pool = mariadb.createPool({
   host: process.env.DB_HOST,       // Adresse du serveur (ex: localhost)
   user: process.env.DB_USER,       // Nom d'utilisateur
-  password: process.env.DB_PASS,   // Mot de passe
+  password: process.env.DB_PASSWORD,   // Mot de passe
   database: process.env.DB_NAME,   // Nom de la base de données
   port: process.env.DB_PORT || 3306, // Port par défaut de MariaDB/MySQL
   connectionLimit: 5               // Nombre max de connexions simultanées
