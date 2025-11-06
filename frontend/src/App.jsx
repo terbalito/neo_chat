@@ -3,7 +3,8 @@ import MatchScreen from "./components/MatchScreen";
 import ChatRoom from "./components/ChatRoom";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
-import socket from "./socket"; // ⚠️ IMPORTANT
+import socket from "./socket"; 
+
 
 export default function App() {
   const [partner, setPartner] = useState(null);

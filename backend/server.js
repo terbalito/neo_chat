@@ -1,14 +1,16 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
-import dotenv from "dotenv";
+
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
 import { createConnection } from "./utils/db.js";
 import { chatSocket } from "./sockets/chatSocket.js";
 
-dotenv.config();
 
 const app = express();
 const server = http.createServer(app);

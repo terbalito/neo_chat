@@ -1,12 +1,34 @@
 // backend/sockets/chatSocket.js
-import pool from "../utils/db.js"; // pour récupérer infos utilisateurs depuis la DB si besoin
+import pool from "../utils/db.js";
 
 export function chatSocket(io) {
-  let waitingUsers = []; // queue FIFO
-  const users = {}; // socketId -> socket
-  const matches = new Map(); // socketId -> partnerSocketId
+  let waitingUsers = [];
+  const users = {}; // socket.id -> socket
+  const matches = new Map(); // socket.id -> partnerSocketId
 
-  // fonction pour trouver un partenaire
+  // 🔥 Fonction pour envoyer les stats globales à tous les clients
+  async function broadcastStats() {
+    try {
+      const rows = await pool.query("SELECT COUNT(*) AS total FROM users");
+      const totalUsers = Number(rows[0]?.total || 0);
+
+      console.log("👥 Nombre total d’utilisateurs en base :", totalUsers);
+
+      const connectedCount = Object.keys(users).length;
+      const conversationsCount = matches.size / 2;
+
+      // ✅ On évite d’envoyer des BigInt ici
+      io.emit("statsUpdate", {
+        totalUsers,
+        connectedCount,
+        conversationsCount,
+      });
+    } catch (error) {
+      console.error("❌ Erreur lors du comptage des stats :", error);
+    }
+  }
+
+  // 🔎 Trouver un partenaire
   async function trouverPartenairePour(socketId) {
     const otherSocketId = waitingUsers.find(
       (id) => id !== socketId && !matches.has(id)
@@ -25,38 +47,21 @@ export function chatSocket(io) {
     matches.set(otherSocketId, socketId);
 
     const partnerSocket = users[otherSocketId];
-    let partnerPseudo = partnerSocket?.pseudo;
+    const partnerPseudo = partnerSocket?.pseudo || "Anonyme";
 
-    if (!partnerPseudo) {
-      try {
-        const rows = await pool.query(
-          "SELECT pseudo FROM users WHERE id = ?",
-          [otherSocketId]
-        );
-        partnerPseudo = rows[0]?.pseudo || "Anonyme";
-      } catch (err) {
-        console.error("Erreur récupération pseudo :", err);
-        partnerPseudo = "Anonyme";
-      }
-    }
-
-    return {
-      id: otherSocketId,
-      pseudo: partnerPseudo,
-      socketId: otherSocketId,
-    };
+    await broadcastStats();
+    return { id: otherSocketId, pseudo: partnerPseudo, socketId: otherSocketId };
   }
 
   io.on("connection", (socket) => {
     console.log("⚡ Utilisateur connecté :", socket.id);
     users[socket.id] = socket;
+    broadcastStats();
 
-    // Optionnel : stocker le pseudo côté socket
     socket.on("setPseudo", (pseudo) => {
       socket.pseudo = pseudo;
     });
 
-    // Cherche un match
     socket.on("findMatch", async () => {
       const partner = await trouverPartenairePour(socket.id);
       if (partner) {
@@ -64,7 +69,6 @@ export function chatSocket(io) {
           id: partner.id,
           pseudo: partner.pseudo,
         });
-
         io.to(partner.socketId).emit("matchFound", {
           id: socket.id,
           pseudo: socket.pseudo || "Anonyme",
@@ -72,51 +76,31 @@ export function chatSocket(io) {
       } else {
         socket.emit("searching");
       }
+      broadcastStats();
     });
 
-    // Switch / quitter partenaire
-    socket.on("switchPartner", () => {
-      const partnerId = matches.get(socket.id);
-      if (partnerId && users[partnerId]) {
-        users[partnerId].emit("partnerLeft");
-      }
-      matches.delete(socket.id);
-      matches.delete(partnerId);
-
+    socket.on("cancelSearch", () => {
       waitingUsers = waitingUsers.filter((id) => id !== socket.id);
-      waitingUsers.push(socket.id);
-
-      socket.emit("searching");
-      socket.emit("attemptMatch");
-      socket.emit("findMatch");
+      socket.emit("searchCancelled");
+      broadcastStats();
     });
 
-    // Envoyer un message
     socket.on("sendMessage", ({ content }) => {
       const partnerId = matches.get(socket.id);
       if (partnerId && users[partnerId]) {
         const senderPseudo = socket.pseudo || "Moi";
-
-        // envoie au partenaire
         users[partnerId].emit("receiveMessage", {
           sender: senderPseudo,
           content,
         });
-
-        // envoie à l'expéditeur (comme confirmation)
         socket.emit("receiveMessage", {
           sender: "Moi",
           content,
         });
-
         console.log(`📩 ${senderPseudo} -> ${partnerId}: ${content}`);
-      } else {
-        socket.emit("noPartner");
-        console.log(`⚠️ ${socket.id} n'a pas de partner pour envoyer`);
       }
     });
 
-    // Typing indicator
     socket.on("typing", (isTyping) => {
       const partnerId = matches.get(socket.id);
       if (partnerId && users[partnerId]) {
@@ -124,13 +108,6 @@ export function chatSocket(io) {
       }
     });
 
-    // Quitter la file
-    socket.on("leaveQueue", () => {
-      waitingUsers = waitingUsers.filter((id) => id !== socket.id);
-      socket.emit("leftQueue");
-    });
-
-    // Déconnexion
     socket.on("disconnect", () => {
       console.log("❌ Utilisateur déconnecté :", socket.id);
       const partnerId = matches.get(socket.id);
@@ -141,6 +118,7 @@ export function chatSocket(io) {
       matches.delete(socket.id);
       waitingUsers = waitingUsers.filter((id) => id !== socket.id);
       delete users[socket.id];
+      broadcastStats();
     });
   });
 }
